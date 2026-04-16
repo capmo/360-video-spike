@@ -26,5 +26,7 @@ hs_err_pid*
 *.keystore
 
 # Large test media files — too big for git. Download or adb-push separately.
-# Keep test_360.mp4 (8 MB) tracked; exclude the raw .insv (137 MB).
+# Keep test_360.mp4 (8 MB) tracked; exclude the raw .insv (137 MB) and
+# the 36 MB exported sphere MP4 used by the viewer module.
 app/src/main/assets/test.insv
+viewer/src/main/assets/sphere.mp4

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="viewer_title">360 Viewer (Media3 only)</string>
+    <string name="viewer_subtitle">Drag to pan. Zero Insta360 SDK bytes in this APK.</string>
+    <string name="viewer_asset_extract_failed">Asset extract failed: %1$s</string>
+</resources>

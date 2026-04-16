@@ -44,3 +44,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "insta360-spike"
 include(":app")
+include(":viewer")
