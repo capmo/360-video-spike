@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+captures/
+
+# Local environment — contains absolute SDK path, keystore passwords, etc.
+local.properties
+
+# Native build
+.externalNativeBuild/
+.cxx/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+hs_err_pid*
+
+# Keystores (none committed today, but guard against future slips)
+*.jks
+*.keystore
+
+# Large test media files — too big for git. Download or adb-push separately.
+# Keep test_360.mp4 (8 MB) tracked; exclude the raw .insv (137 MB).
+app/src/main/assets/test.insv
