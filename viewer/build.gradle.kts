@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "de.capmo.insta360viewer"
-    compileSdk = 36
+    compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
         applicationId = "de.capmo.insta360viewer"
-        minSdk = 29
-        targetSdk = 36
+        minSdk = libs.versions.minSdk.get().toInt()
+        targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
     }

@@ -29,6 +29,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // Both files live in src/main/assets. The .insv is the raw X4/X5 dual-fisheye
 // format that exercises the SDK's sphere projection + on-device stitching.
@@ -54,18 +58,23 @@ private fun SpikeScreen() {
     var localFilePath by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    val copyScope = androidx.compose.runtime.rememberCoroutineScope()
+
     // Copy bundled asset → cacheDir once on first composition, then auto-play.
     LaunchedEffect(Unit) {
         if (localFilePath != null) return@LaunchedEffect
         try {
             val destination = File(context.cacheDir, BUNDLED_ASSET_NAME)
-            if (!destination.exists() || destination.length() == 0L) {
-                context.assets.open(BUNDLED_ASSET_NAME).use { input ->
-                    destination.outputStream().use { output -> input.copyTo(output) }
+            withContext(Dispatchers.IO) {
+                if (!destination.exists() || destination.length() == 0L) {
+                    context.assets.open(BUNDLED_ASSET_NAME).use { input ->
+                        destination.outputStream().use { output -> input.copyTo(output) }
+                    }
                 }
             }
             localFilePath = destination.absolutePath
         } catch (t: Throwable) {
+            if (t is CancellationException) throw t
             errorMessage = "Failed to extract bundled asset: ${t.message}"
         }
     }
@@ -74,22 +83,32 @@ private fun SpikeScreen() {
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        try {
-            // Copy to app-private cache so the SDK gets a plain filesystem path.
-            val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex >= 0) cursor.getString(nameIndex) else null
-                } else null
-            } ?: "picked.insv"
-            val destination = File(context.cacheDir, displayName)
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                destination.outputStream().use { output -> input.copyTo(output) }
+        copyScope.launch {
+            try {
+                // Copy to app-private cache so the SDK gets a plain filesystem path.
+                // Runs on IO so large files don't ANR the picker callback.
+                val path = withContext(Dispatchers.IO) {
+                    val displayName = context.contentResolver
+                        .query(uri, null, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIndex = cursor.getColumnIndex(
+                                    android.provider.OpenableColumns.DISPLAY_NAME,
+                                )
+                                if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                            } else null
+                        } ?: "picked.insv"
+                    val destination = File(context.cacheDir, displayName)
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        destination.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    destination.absolutePath
+                }
+                localFilePath = path
+                errorMessage = null
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                errorMessage = "Failed to copy file: ${t.message}"
             }
-            localFilePath = destination.absolutePath
-            errorMessage = null
-        } catch (t: Throwable) {
-            errorMessage = "Failed to copy file: ${t.message}"
         }
     }
 
