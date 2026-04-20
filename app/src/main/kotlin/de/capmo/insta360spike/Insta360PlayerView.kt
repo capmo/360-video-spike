@@ -23,10 +23,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.arashivision.sdkmedia.export.ExportUtils
 import com.arashivision.sdkmedia.export.ExportVideoParamsBuilder
 import com.arashivision.sdkmedia.export.IExportCallback
@@ -37,6 +37,7 @@ import com.arashivision.sdkmedia.player.video.VideoParamsBuilder
 import com.arashivision.sdkmedia.work.WorkWrapper
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -79,12 +80,15 @@ private class Insta360PlayerState {
     @Volatile
     private var workWrapper: WorkWrapper? = null
 
-    // Signals view attachment so a [loadAndPlay] coroutine that started before
-    // `AndroidView.factory` ran can await the view instead of racing and giving up.
+    @Volatile
+    private var activeExportId: Int? = null
     private val _viewReady = MutableStateFlow(false)
 
     private val _statusFlow = MutableStateFlow("Loading…")
     val statusFlow: StateFlow<String> = _statusFlow.asStateFlow()
+
+    private val _canExport = MutableStateFlow(false)
+    val canExportFlow: StateFlow<Boolean> = _canExport.asStateFlow()
 
     private val _exportStateFlow = MutableStateFlow<ExportState>(ExportState.Idle)
     val exportStateFlow: StateFlow<ExportState> = _exportStateFlow.asStateFlow()
@@ -136,8 +140,9 @@ private class Insta360PlayerState {
                     if (!wrapper.isExtraDataLoaded) wrapper.loadExtraData()
                 }
             }
-            coroutineContext.ensureActive()
+            currentCoroutineContext().ensureActive()
             workWrapper = work
+            _canExport.value = work.isVideo
             if (!work.isVideo) {
                 _statusFlow.value = "File is not a video (spike plays video only)"
                 return
@@ -146,13 +151,13 @@ private class Insta360PlayerState {
             view.play()
             _statusFlow.value = "Playing ${work.width}×${work.height} @ ${work.fps}fps"
         } catch (t: Throwable) {
-            coroutineContext.ensureActive() // rethrow cancellation instead of swallowing it
+            // Rethrow cancellation first so we don't flash a stale error through
+            // collectAsState before the effect tears down.
+            currentCoroutineContext().ensureActive()
             Log.e(TAG, "Failed to prepare player", t)
             _statusFlow.value = "Error: ${t.message}"
         }
     }
-
-    fun canExport(): Boolean = workWrapper?.isVideo == true
 
     /**
      * Start an export. Progress callbacks arrive on the SDK's encoder thread; we
@@ -177,19 +182,23 @@ private class Insta360PlayerState {
             object : IExportCallback {
                 override fun onStart(id: Int) {
                     Log.d(TAG, "Export onStart id=$id → $target")
+                    activeExportId = id
                 }
                 override fun onProgress(progress: Float) {
                     postToMain { _exportStateFlow.value = ExportState.Running(progress) }
                 }
                 override fun onSuccess() {
                     Log.d(TAG, "Export onSuccess $target")
+                    activeExportId = null
                     postToMain { _exportStateFlow.value = ExportState.Succeeded(target) }
                 }
                 override fun onFail(code: Int, msg: String?) {
                     Log.e(TAG, "Export onFail $code $msg")
+                    activeExportId = null
                     postToMain { _exportStateFlow.value = ExportState.Failed("$code: $msg") }
                 }
                 override fun onCancel() {
+                    activeExportId = null
                     postToMain { _exportStateFlow.value = ExportState.Idle }
                 }
             },
@@ -199,6 +208,10 @@ private class Insta360PlayerState {
     /** Called from AndroidView.onRelease. Cleans up native resources. */
     fun release() {
         _viewReady.value = false
+        _canExport.value = false
+        activeExportId?.let { ExportUtils.stopExport(it) }
+        activeExportId = null
+        mainHandler.removeCallbacksAndMessages(null)
         view?.destroy()
         view = null
         workWrapper = null
@@ -226,6 +239,7 @@ fun Insta360PlayerView(
     val context: Context = LocalContext.current
     val state = remember { Insta360PlayerState() }
     val status by state.statusFlow.collectAsState()
+    val canExport by state.canExportFlow.collectAsState()
     val exportState by state.exportStateFlow.throttlingRunningProgress()
         .collectAsState(initial = ExportState.Idle)
 
@@ -253,7 +267,7 @@ fun Insta360PlayerView(
         ModeButtons(state)
         ExportRow(
             exportState = exportState,
-            enabled = state.canExport(),
+            enabled = canExport,
             onExport = { state.startExport(context.cacheDir) },
             onPlayExported = onExported,
         )
@@ -262,8 +276,6 @@ fun Insta360PlayerView(
 
 @Composable
 private fun ModeButtons(state: Insta360PlayerState) {
-    // Mode switches target the native view directly; state holder exposes a helper
-    // (not a StateFlow) because these are fire-and-forget side effects.
     Row(
         modifier = Modifier.fillMaxWidth().padding(8.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,

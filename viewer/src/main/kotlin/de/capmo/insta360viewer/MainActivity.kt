@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -31,6 +32,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.video.spherical.SphericalGLSurfaceView
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -61,7 +63,7 @@ class MainActivity : ComponentActivity() {
  * so rotation preserves playback position and error state survives config changes.
  * For the spike, keeping it inside [remember] is sufficient.
  */
-@OptIn(UnstableApi::class)
+@UnstableApi
 @Stable
 private class ViewerPlayerState(context: Context) {
 
@@ -91,6 +93,7 @@ private class ViewerPlayerState(context: Context) {
             }
             _localPath.value = dest.absolutePath
         } catch (t: Throwable) {
+            if (t is CancellationException) throw t
             _error.value = context.getString(R.string.viewer_asset_extract_failed, t.message.orEmpty())
         }
     }
@@ -129,9 +132,15 @@ private class ViewerPlayerState(context: Context) {
     }
 }
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 private fun ViewerScreen() {
+    // Android Studio previews have no assets dir and no GL surface — constructing
+    // ExoPlayer + extracting a 63 MB MP4 would throw. Render a stateless stand-in.
+    if (LocalInspectionMode.current) {
+        ViewerScreenPreviewContent()
+        return
+    }
     val context = LocalContext.current
     val state = remember(context) { ViewerPlayerState(context) }
     val localPath by state.localPath.collectAsStateWithLifecycle()
@@ -195,12 +204,26 @@ private fun ViewerScreen() {
     }
 }
 
-@OptIn(UnstableApi::class)
+@Composable
+private fun ViewerScreenPreviewContent() {
+    Scaffold { innerPadding ->
+        Column(modifier = Modifier.fillMaxSize().padding(innerPadding).padding(16.dp)) {
+            Text(stringResource(R.string.viewer_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.viewer_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            Box(modifier = Modifier.fillMaxWidth().weight(1f))
+        }
+    }
+}
+
 @Preview(showBackground = true, name = "Light")
 @Preview(showBackground = true, uiMode = android.content.res.Configuration.UI_MODE_NIGHT_YES, name = "Dark")
 @Composable
 private fun ViewerScreenPreview() {
     MaterialTheme {
-        ViewerScreen()
+        ViewerScreenPreviewContent()
     }
 }
